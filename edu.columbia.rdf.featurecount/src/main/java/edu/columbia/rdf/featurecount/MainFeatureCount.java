@@ -16,8 +16,9 @@ import org.jebtk.bioinformatics.gapsearch.GapSearch;
 import org.jebtk.bioinformatics.gapsearch.SearchResults;
 import org.jebtk.bioinformatics.genomic.Chromosome;
 import org.jebtk.bioinformatics.genomic.GFF3Parser;
-import org.jebtk.bioinformatics.genomic.GTB2Parser;
 import org.jebtk.bioinformatics.genomic.GTB1Parser;
+import org.jebtk.bioinformatics.genomic.GTB2Parser;
+import org.jebtk.bioinformatics.genomic.GTBZParser;
 import org.jebtk.bioinformatics.genomic.Gene;
 import org.jebtk.bioinformatics.genomic.GeneParser;
 import org.jebtk.bioinformatics.genomic.GeneType;
@@ -40,17 +41,16 @@ import org.jebtk.core.collections.TreeSetCreator;
 import org.jebtk.core.io.FileUtils;
 import org.jebtk.core.io.PathUtils;
 import org.jebtk.core.text.Join;
-import org.jebtk.core.text.TextUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.xml.sax.SAXException;
 
 import htsjdk.samtools.Cigar;
 import htsjdk.samtools.CigarElement;
+import htsjdk.samtools.SAMFileWriter;
 import htsjdk.samtools.SAMRecord;
 import htsjdk.samtools.SAMTextHeaderCodec;
 import htsjdk.samtools.SamReader;
-import htsjdk.samtools.SamReaderFactory;
 
 
 /**
@@ -65,7 +65,6 @@ public class MainFeatureCount {
 
 	private static final int RECORD_N_NOTIFY = 100000;
 
-
 	public static void main(String[] args) throws SAXException, IOException, ParserConfigurationException, ParseException {
 		Options options = new Options();
 
@@ -76,9 +75,10 @@ public class MainFeatureCount {
 		options.add('o', "loc-frac");
 		options.add('f', "gene-frac");
 		options.add('s', "trans-frac");
-		options.add('d', "detailed-output");
+		options.add('d', "detailed", true);
 		options.add('m', "mapped");
 		options.add('q', "quiet");
+		options.add('u', "unmapped", true);
 		options.add('b', "min-bp", true);
 
 		boolean fracCountMode = false;
@@ -89,16 +89,14 @@ public class MainFeatureCount {
 		boolean mapped = false;
 		boolean quiet = false;
 
-
-		boolean complexOutput = false;
-
 		// The fraction of cigar mappings that must contain the same gene for
 		// a read to be kept
 		double cigarKeepF = 0.6;
 
 		Path gffFile = null;
 		Path gtbFile = null;
-
+		Path unmappedFile = null; //UNMAPPED_PATH;
+		Path detailedFile = null; 
 		int minBp = 10;
 
 		Set<String> excludeTags = new HashSet<String>();
@@ -108,8 +106,8 @@ public class MainFeatureCount {
 
 		GeneType level;
 
+		
 		for (CommandLineArg cmdArg : cmdArgs) {
-
 			switch (cmdArg.getShortName()) {
 			case 'g':
 				gffFile = PathUtils.getPath(cmdArg.getValue());
@@ -126,6 +124,7 @@ public class MainFeatureCount {
 				if (level != GeneType.UNDEFINED) {
 					levels.add(level);
 				}
+				
 				break;
 			case 'b':
 				minBp = cmdArg.getIntValue();
@@ -140,13 +139,16 @@ public class MainFeatureCount {
 				geneFracMode = true;
 				break;
 			case 'd':
-				complexOutput = true;
+				detailedFile = PathUtils.getPath(cmdArg.getValue());
 				break;
 			case 'm':
 				mapped = true;
 				break;
 			case 'q':
 				quiet = true;
+				break;
+			case 'u':
+				unmappedFile = PathUtils.getPath(cmdArg.getValue());
 				break;
 			case 'h':
 			default:
@@ -182,13 +184,15 @@ public class MainFeatureCount {
 			LOG.info("Loading gtb from {}...", gtbFile);
 
 			GeneParser parser;
-			
+
 			if (PathUtils.getName(gtbFile).contains("gtb2")) {
 				parser = new GTB2Parser();
+			} else if (PathUtils.getName(gtbFile).contains("gtbz")) {
+				parser = new GTBZParser();
 			} else {
 				parser = new GTB1Parser();
 			}
-			
+
 			parser = parser.setLevels(levels)
 					.setKeepExons(false)
 					.excludeByTag(excludeTags);
@@ -215,11 +219,10 @@ public class MainFeatureCount {
 				DefaultTreeMap.create(
 						DefaultTreeMapCreator.<GenomicRegion, IterMap<GenomicRegion, IterMap<String, Set<String>>>>create(
 								DefaultTreeMapCreator.<GenomicRegion, IterMap<String, Set<String>>>create(
-										DefaultTreeMapCreator.<String, Set<String>>create(
-												TreeSetCreator.<String>create()))));
+										new DefaultTreeMapCreator<String, Set<String>>(new TreeSetCreator<String>()))));
 
 		IterMap<String, IterMap<GenomicRegion, String>> cigarMap =
-				DefaultTreeMap.create(TreeMapCreator.<GenomicRegion, String>create());
+				DefaultTreeMap.create(new TreeMapCreator<GenomicRegion, String>());
 
 
 		//IterMap<String, IterMap<GenomicRegion, Set<GenomicRegion>>> allCigarLocations =
@@ -251,15 +254,27 @@ public class MainFeatureCount {
 			DoubleCountMap<String> tCountMap = DoubleCountMap.create();
 			DoubleCountMap<String> gCountMap = DoubleCountMap.create();
 
-			SamReader reader = 
-					SamReaderFactory.makeDefault().open(bamFile.toFile());
+			SamReader reader = SamUtils.newBamReader(bamFile);
+
+			SAMFileWriter bamWriter = null;
+
+			if (unmappedFile != null) {
+				LOG.info("Writing unmapped reads to: {}", unmappedFile);
+
+				bamWriter = SamUtils.newBamWriter(reader, unmappedFile);
+			}
 
 			try {
-
 				for (final SAMRecord record : reader) {
 					if (record.getReadUnmappedFlag()) {
 						continue;
 					}
+					
+					if (c % RECORD_N_NOTIFY == 0) {
+						LOG.info("Processed {} records.", c);
+					}
+
+					++c;
 
 					String rid = record.getReadName();
 
@@ -281,6 +296,10 @@ public class MainFeatureCount {
 							processRegion(record, region, minBp, genes, allCigarLocations);
 
 					if(!keep(record.getReadName(), region, results, allCigarLocations, cigarKeepF)) {
+						if (bamWriter != null) {
+							bamWriter.addAlignment(record);
+						}
+
 						continue;
 					}
 
@@ -301,7 +320,7 @@ public class MainFeatureCount {
 							for (Gene gene : search.getValues(rr)) {
 								String tid = gene.getTranscriptId();
 
-								String symbol = gene.getSymbol().toUpperCase();
+								String symbol = gene.getSymbol(); //.toUpperCase();
 								// for a given gene we know all of the transcripts
 								// overlapping it
 								//tids.get(symbol).add(tid);
@@ -321,25 +340,17 @@ public class MainFeatureCount {
 						}
 					}
 
-					/*
-				if (exonReads) {
-					for (String tid1 : tids) {
-						for (String tid2 : tids) {
-							overlappingTransMap.get(tid1).add(tid2);
-						}
-					}
-				}
-					 */
-
-					if (c % RECORD_N_NOTIFY == 0) {
-						LOG.info("Processed {} records.", c);
-					}
-
-					++c;
+					
 				}
 			} finally {
 				reader.close();
+
+				if (bamWriter != null) {
+					bamWriter.close();
+				}
 			}
+
+			LOG.info("Processed {} records.", c);
 
 			if (fracCountMode) {
 
@@ -371,7 +382,7 @@ public class MainFeatureCount {
 						//	continue;
 						//}
 
-
+						/*
 						int geneCount;
 
 						if (geneFracMode) {
@@ -379,6 +390,7 @@ public class MainFeatureCount {
 						} else {
 							geneCount = 1;
 						}
+						*/
 
 						//CountMap<String> transCountsPerGene = null;
 
@@ -390,8 +402,17 @@ public class MainFeatureCount {
 						int cigarCount = cigarLocations.size();
 
 						for (GenomicRegion cigarRegion : cigarLocations) {
-							IterMap<String, Set<String>> symbols = cigarLocations.get(cigarRegion);
+							IterMap<String, Set<String>> symbols = 
+									cigarLocations.get(cigarRegion);
 
+							int geneCount;
+							
+							if (geneFracMode) {
+								geneCount = symbols.size();
+							} else {
+								geneCount = 1;
+							}
+							
 							for (String symbol : symbols) {
 								Set<String> tids = symbols.get(symbol);
 
@@ -422,8 +443,8 @@ public class MainFeatureCount {
 			output(genes, symbolTranscriptMap, gCountMap);
 		}
 
-		if (complexOutput) {
-			complexOutput(readTransMap, cigarMap, PathUtils.getPath("detailed.txt"));
+		if (detailedFile != null) {
+			detailedOutput(readTransMap, cigarMap, detailedFile);
 		}
 
 		if (mapped) {
@@ -436,7 +457,15 @@ public class MainFeatureCount {
 			DoubleCountMap<String> gCountMap) {
 		LOG.info("Writing...");
 
-		System.out.println(Join.onTab("Gene", "Chr", "Start", "End", "Strand", "Exon Width", "Count", "Transcript Ids").toString());
+		Join.onTab("Gene", 
+				"Chr", 
+				"Start", 
+				"End", 
+				"Strand", 
+				"Exon Width", 
+				"Count", 
+				"Transcript Ids")
+		.println();
 
 
 		Iterable<String> gids = genes.getSymbols();// CollectionUtils.sortKeys(gCountMap); //genes.getSymbols(); //
@@ -449,36 +478,44 @@ public class MainFeatureCount {
 
 			//String symbol = symbolTranscriptMap.get(gid).iterator().next();
 
-			String transcripts = Join.onSemiColon().values(symbolTranscriptMap.get(gid)).toString();
+			String transcripts = Join.onSemiColon()
+					.values(symbolTranscriptMap.get(gid))
+					.toString();
 
 			Set<Integer> bases = new HashSet<Integer>();
 
-			Iterable<Gene> exons = genes.lookupBySymbol(gid);
+			Iterable<Gene> exons = genes.getGenes(gid);
 
 			int min = Integer.MAX_VALUE;
 			int max = Integer.MIN_VALUE;
 
 			// Count all the unique bases involved in each exon
 			for (Gene exon : exons) {
-				GenomicRegion region = exon.getRegion();
-
 				if (chr == null) {
-					chr = region.getChr();
+					chr = exon.getChr();
 				}
 
 				if (strand == null) {
-					strand = region.getStrand();
+					strand = exon.getStrand();
 				}
 
-				min = Math.min(min, region.getStart());
-				max = Math.max(max, region.getEnd());
+				min = Math.min(min, exon.getStart());
+				max = Math.max(max, exon.getEnd());
 
-				for (int i = region.getStart(); i <= region.getEnd(); ++i) {
+				for (int i = exon.getStart(); i <= exon.getEnd(); ++i) {
 					bases.add(i);
 				}
 			}
 
-			System.out.println(Join.onTab(gid, chr, min, max, strand, bases.size(), gCountMap.get(gid), transcripts).toString());
+			Join.onTab(gid, 
+					chr, 
+					min, 
+					max, 
+					strand, 
+					bases.size(), 
+					gCountMap.get(gid), 
+					transcripts)
+			.println();
 		}
 	}
 
@@ -526,50 +563,10 @@ public class MainFeatureCount {
 		}
 	}
 
-	private static boolean keep2(String readId,
-			GenomicRegion region,
-			IterMap<GenomicRegion, IterMap<String, Set<String>>> cigarLocations,
-			IterMap<String, IterMap<GenomicRegion, Set<GenomicRegion>>> allCigarLocations) {
-		// All the locations of this read at this region
-		Set<GenomicRegion> mappedCigarLocations = 
-				allCigarLocations.get(readId).get(region);
-
-		if (mappedCigarLocations.size() == 0) {
-			return false;
-		} else {
-			// if there are multiple mapped locations, we must check that 
-			// the same gene is found at each location
-
-			// If there is more than one piece, check that they all share
-			// a common gene
-
-			Map<String, Set<GenomicRegion>> geneMap =
-					DefaultHashMap.create(new HashSetCreator<GenomicRegion>());
-
-			for (GenomicRegion cigarRegion : cigarLocations) {
-				IterMap<String, Set<String>> symbols = cigarLocations.get(cigarRegion);
-
-				for (String symbol : symbols) {
-					//System.err.println("keep2 " + symbol + " " + cigarRegion + " " + mappedCigarLocations);
-
-					geneMap.get(symbol).add(cigarRegion);
-
-					// If the gene is mapped in all of the cigar pieces,
-					// we can assume that this is a spliced read
-					if (geneMap.get(symbol).size() == mappedCigarLocations.size()) { //cigarLocations.size()) {
-						return true;
-					}
-				}
-			}
-
-			return false;
-		}
-	}
-
 	private static final IterMap<GenomicRegion, SearchResults<Gene>> processRegion(SAMRecord record, 
 			GenomicRegion region,
 			int minBp,
-			GapSearch<Gene> gapSearch,
+			GapSearch<Gene> genes,
 			Set<GenomicRegion> allCigarLocations) {
 		//gapSearch.getOverlappingFeatures(region, minBp, results);
 
@@ -597,13 +594,13 @@ public class MainFeatureCount {
 				//System.err.println("CIGAR " + l + ce.getOperator() + " " + r);
 
 				SearchResults<Gene> features = 
-						gapSearch.getOverlappingFeatures(r, minBp);
-				
+						genes.getOverlappingFeatures(r, minBp);
+
 				// Only populate with interesting results
 				if (features.size() > 0) {
 					ret.put(r, features);
 				}
-				
+
 				allCigarLocations.add(r);
 
 				start = end + 1;
@@ -626,15 +623,17 @@ public class MainFeatureCount {
 		return ret;
 	}
 
-	private static void complexOutput(IterMap<String, IterMap<GenomicRegion, IterMap<GenomicRegion, IterMap<String, Set<String>>>>> readTransMap,
+	private static void detailedOutput(IterMap<String, IterMap<GenomicRegion, IterMap<GenomicRegion, IterMap<String, Set<String>>>>> readTransMap,
 			IterMap<String, IterMap<GenomicRegion, String>> samMap,
 			Path file) throws IOException {
 		LOG.info("Writing detailed output to {}...", file);
 
 		BufferedWriter writer = FileUtils.newBufferedWriter(file);
 
+		double sumF = 0;
+
 		try {
-			writer.write(Join.onTab().values("Read", "Location", "Width", "CIGAR Location", "CIGAR Width", "SAM", "Gene", "Transcript", "Locations", "Genes", "CIGARS", "Transcripts", "f").toString());
+			writer.write(Join.onTab().values("Read", "Location", "Width", "CIGAR Location", "CIGAR Width", "SAM", "Gene", "Transcript", "Location Count", "CIGAR Count", "Gene Count", "Transcript Count", "f").toString());
 			writer.newLine();
 
 			for (String rid : readTransMap) {
@@ -647,8 +646,6 @@ public class MainFeatureCount {
 
 				// For each different location a read maps
 				for (GenomicRegion location : locations) {
-
-
 					String sam = samMap.get(rid).get(location);
 
 					// All the transcript ids of the elements it
@@ -662,28 +659,49 @@ public class MainFeatureCount {
 
 					//String symbols = Join.onSemiColon().values(symbolMap).toString();
 
-					int geneCount = countSymbols(cigarLocations); //readGeneMap.get(rid).size();
+					int cigarCount = cigarLocations.size();
+					
+					//int geneCount = countSymbols(cigarLocations); //readGeneMap.get(rid).size();
 
 					//CountMap<String> transCountsPerGene = 
 					//		countTranscriptsPerGene(cigarLocations);
 
-					int cigarCount = cigarLocations.size();
+					
 
 					for (GenomicRegion cigarLocation : cigarLocations) {
-						IterMap<String, Set<String>> symbols = cigarLocations.get(cigarLocation);
+						IterMap<String, Set<String>> symbols = 
+								cigarLocations.get(cigarLocation);
 
+						int geneCount = symbols.size(); //countSymbols(cigarLocations);
+						
 						for (String symbol : symbols) {
 							Set<String> tids = symbols.get(symbol);
 
 							int transCount = tids.size();
 
 
-							double f = f(locationCount, geneCount, cigarCount, transCount);
+							double f = f(locationCount, 
+									cigarCount, 
+									geneCount, 
+									transCount);
 
+							sumF += f;
 
 							for (String tid : tids) {
-								writer.write(Join.onTab().values(rid, location, location.getLength(), cigarLocation, cigarLocation.getLength(), sam, symbol, tid, locationCount, geneCount, cigarCount, transCount, f).toString());
-								writer.newLine();
+								Join.onTab().values(rid, 
+										location, 
+										location.getLength(), 
+										cigarLocation, 
+										cigarLocation.getLength(), 
+										sam, 
+										symbol, 
+										tid, 
+										locationCount, 
+										cigarCount, 
+										geneCount, 
+										transCount, 
+										f)
+								.println(writer);
 							}
 						}
 					}
@@ -692,6 +710,8 @@ public class MainFeatureCount {
 		} finally {
 			writer.close();
 		}
+
+		LOG.info("sum(f) = {}", sumF);
 
 		LOG.info("Finished.");
 	}
@@ -705,8 +725,8 @@ public class MainFeatureCount {
 	 * @param transCount
 	 * @return
 	 */
-	private static double f(int locationCount, int geneCount, int cigarCount, int transCount) {
-		int n = locationCount * geneCount * cigarCount * transCount;
+	private static double f(int locationCount, int cigarCount, int geneCount, int transCount) {
+		int n = locationCount * cigarCount * geneCount * transCount;
 
 		double f;
 
@@ -756,17 +776,20 @@ public class MainFeatureCount {
 			Path bamFile,
 			Genes genes,
 			int minBp) throws IOException {
+		
+		String name = PathUtils.getName(PathUtils.getPwd());
+		
 		BufferedWriter transcriptomeUniqueWriter = 
-				FileUtils.newBufferedWriter(PathUtils.getPath(TextUtils.prefix(bam, "ts-unique.").replace(".bam", ".sam")));
+				FileUtils.newBufferedWriter(PathUtils.getPath(name + ".ts-unique.sam"));
 
 		BufferedWriter genomeUniqueWriter = 
-				FileUtils.newBufferedWriter(PathUtils.getPath(TextUtils.prefix(bam, "ge-unique.").replace(".bam", ".sam")));
+				FileUtils.newBufferedWriter(PathUtils.getPath(name + ".ge-unique.sam"));
 
 		BufferedWriter transcriptomeWriter = 
-				FileUtils.newBufferedWriter(PathUtils.getPath(TextUtils.prefix(bam, "ts.").replace(".bam", ".sam")));
+				FileUtils.newBufferedWriter(PathUtils.getPath(name + ".ts.sam"));
 
 		BufferedWriter genomeWriter = 
-				FileUtils.newBufferedWriter(PathUtils.getPath(TextUtils.prefix(bam, "ge.").replace(".bam", ".sam")));
+				FileUtils.newBufferedWriter(PathUtils.getPath(name + ".ge.sam"));
 
 		LOG.info("Processing BAM {} for mapping to {}...", bamFile, transcriptomeUniqueWriter);
 
@@ -777,8 +800,7 @@ public class MainFeatureCount {
 		SAMTextHeaderCodec header = new SAMTextHeaderCodec();
 
 		try {
-			SamReader reader = 
-					SamReaderFactory.makeDefault().open(bamFile.toFile());
+			SamReader reader = SamUtils.newBamReader(bamFile);
 
 			header.encode(transcriptomeUniqueWriter, reader.getFileHeader());
 			header.encode(genomeUniqueWriter, reader.getFileHeader());
@@ -812,7 +834,7 @@ public class MainFeatureCount {
 					}
 				} else {
 					if (results.size() > 0) {
-						
+
 						transcriptomeWriter.write(sam); // + "\t" + formatGenes(results));
 						transcriptomeWriter.newLine();
 					} else {
