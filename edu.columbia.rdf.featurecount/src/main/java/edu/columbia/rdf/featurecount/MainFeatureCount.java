@@ -23,6 +23,7 @@ import org.jebtk.bioinformatics.genomic.Gene;
 import org.jebtk.bioinformatics.genomic.GeneParser;
 import org.jebtk.bioinformatics.genomic.GeneType;
 import org.jebtk.bioinformatics.genomic.Genes;
+import org.jebtk.bioinformatics.genomic.Genome;
 import org.jebtk.bioinformatics.genomic.GenomicRegion;
 import org.jebtk.bioinformatics.genomic.Strand;
 import org.jebtk.core.cli.CommandLineArg;
@@ -88,6 +89,7 @@ public class MainFeatureCount {
     boolean transFracMode = false;
     boolean mapped = false;
     boolean quiet = false;
+    String genome = Genome.HG19;
 
     // The fraction of cigar mappings that must contain the same gene for
     // a read to be kept
@@ -278,7 +280,7 @@ public class MainFeatureCount {
 
           String cigar = record.getCigarString();
 
-          GenomicRegion region = SamUtils.getRegion(record);
+          GenomicRegion region = SamUtils.getRegion(genome, record);
 
           // int matches = record.getIntegerAttribute("NH");
 
@@ -294,8 +296,7 @@ public class MainFeatureCount {
               genes,
               allCigarLocations);
 
-          if (!keep(record
-              .getReadName(), region, results, allCigarLocations, cigarKeepF)) {
+          if (!keep(record.getReadName(), region, results, allCigarLocations, cigarKeepF)) {
             if (bamWriter != null) {
               bamWriter.addAlignment(record);
             }
@@ -339,10 +340,7 @@ public class MainFeatureCount {
         }
       } finally {
         reader.close();
-
-        if (bamWriter != null) {
-          bamWriter.close();
-        }
+        bamWriter.close();
       }
 
       LOG.info("Processed {} records.", c);
@@ -439,7 +437,7 @@ public class MainFeatureCount {
     }
 
     if (mapped) {
-      outputMapped(bam, bamFile, genes, minBp);
+      outputMapped(genome, bam, bamFile, genes, minBp);
     }
   }
 
@@ -537,7 +535,7 @@ public class MainFeatureCount {
 
             // If the gene is mapped in all of the cigar pieces,
             // we can assume that this is a spliced read
-            if (geneMap.get(symbol).size() == minC) {
+            if (geneMap.get(symbol).size() >= minC) {
               return true;
             }
           }
@@ -770,7 +768,8 @@ public class MainFeatureCount {
     return counts;
   }
 
-  private static void outputMapped(String bam,
+  private static void outputMapped(String genome,
+      String bam,
       Path bamFile,
       Genes genes,
       int minBp) throws IOException {
@@ -814,7 +813,7 @@ public class MainFeatureCount {
 
         String sam = SamUtils.getSam(record);
 
-        GenomicRegion region = SamUtils.getRegion(record);
+        GenomicRegion region = SamUtils.getRegion(genome, record);
 
         int matches = record.getIntegerAttribute("NH");
 
