@@ -21,10 +21,11 @@ import org.jebtk.bioinformatics.genomic.GTB2Parser;
 import org.jebtk.bioinformatics.genomic.GTBZParser;
 import org.jebtk.bioinformatics.genomic.Gene;
 import org.jebtk.bioinformatics.genomic.GeneParser;
-import org.jebtk.bioinformatics.genomic.GeneType;
 import org.jebtk.bioinformatics.genomic.Genes;
 import org.jebtk.bioinformatics.genomic.Genome;
+import org.jebtk.bioinformatics.genomic.GenomicEntity;
 import org.jebtk.bioinformatics.genomic.GenomicRegion;
+import org.jebtk.bioinformatics.genomic.GenomicType;
 import org.jebtk.bioinformatics.genomic.Strand;
 import org.jebtk.core.cli.CommandLineArg;
 import org.jebtk.core.cli.CommandLineArgs;
@@ -102,11 +103,11 @@ public class MainFeatureCount {
     int minBp = 10;
 
     Set<String> excludeTags = new HashSet<String>();
-    Set<GeneType> levels = new HashSet<GeneType>();
+    Set<GenomicType> levels = new HashSet<GenomicType>();
 
     CommandLineArgs cmdArgs = CommandLineArgs.parse(options, args);
 
-    GeneType level;
+    GenomicType level;
 
     for (CommandLineArg cmdArg : cmdArgs) {
       switch (cmdArg.getShortName()) {
@@ -120,9 +121,9 @@ public class MainFeatureCount {
         excludeTags.add(cmdArg.getValue());
         break;
       case 'l':
-        level = GeneType.parse(cmdArg.getValue());
+        level = GenomicType.parse(cmdArg.getValue());
 
-        if (level != GeneType.UNDEFINED) {
+        if (level != GenomicType.UNDEFINED) {
           levels.add(level);
         }
 
@@ -160,7 +161,7 @@ public class MainFeatureCount {
     }
 
     if (levels.size() == 0) {
-      levels.add(GeneType.EXON);
+      levels.add(GenomicType.EXON);
     }
 
     LOG.info("Excluding tags: {}...", excludeTags);
@@ -176,7 +177,7 @@ public class MainFeatureCount {
       GeneParser parser = new GFF3Parser().setLevels(levels)
           .setKeepExons(false);
 
-      genes = parser.parse(gffFile);
+      genes = parser.parse(gffFile, genome);
     }
 
     if (gtbFile != null) {
@@ -195,7 +196,7 @@ public class MainFeatureCount {
       parser = parser.setLevels(levels).setKeepExons(false)
           .excludeByTag(excludeTags);
 
-      genes = parser.parse(gtbFile);
+      genes = parser.parse(gtbFile, genome);
 
       symbolTranscriptMap = parser.idMap(gtbFile, "symbol", "transcript_id");
     }
@@ -289,14 +290,15 @@ public class MainFeatureCount {
 
           allCigarLocations.clear();
 
-          IterMap<GenomicRegion, SearchResults<Gene>> results = processRegion(
+          IterMap<GenomicRegion, SearchResults<GenomicEntity>> results = processRegion(
               record,
               region,
               minBp,
               genes,
               allCigarLocations);
 
-          if (!keep(record.getReadName(), region, results, allCigarLocations, cigarKeepF)) {
+          if (!keep(record
+              .getReadName(), region, results, allCigarLocations, cigarKeepF)) {
             if (bamWriter != null) {
               bamWriter.addAlignment(record);
             }
@@ -310,13 +312,13 @@ public class MainFeatureCount {
           cigarMap.get(rid).put(region, cigar);
 
           for (GenomicRegion cigarLocation : results) {
-            SearchResults<Gene> search = results.get(cigarLocation);
+            SearchResults<GenomicEntity> search = results.get(cigarLocation);
 
             // System.err.println(rid + " " + results.size() + " " +
             // search.size());
 
             for (GenomicRegion rr : search) {
-              for (Gene gene : search.getValues(rr)) {
+              for (GenomicEntity gene : search.getValues(rr)) {
                 String tid = gene.getTranscriptId();
 
                 String symbol = gene.getSymbol(); // .toUpperCase();
@@ -471,13 +473,13 @@ public class MainFeatureCount {
 
       Set<Integer> bases = new HashSet<Integer>();
 
-      Iterable<Gene> exons = genes.getGenes(gid);
+      Iterable<GenomicEntity> exons = genes.getGenes(gid);
 
       int min = Integer.MAX_VALUE;
       int max = Integer.MIN_VALUE;
 
       // Count all the unique bases involved in each exon
-      for (Gene exon : exons) {
+      for (GenomicEntity exon : exons) {
         if (chr == null) {
           chr = exon.getChr();
         }
@@ -507,7 +509,7 @@ public class MainFeatureCount {
 
   private static boolean keep(String readId,
       GenomicRegion region,
-      final IterMap<GenomicRegion, SearchResults<Gene>> results,
+      final IterMap<GenomicRegion, SearchResults<GenomicEntity>> results,
       final Set<GenomicRegion> allCigarLocations,
       double cigarKeepF) {
 
@@ -525,10 +527,10 @@ public class MainFeatureCount {
           .create(new HashSetCreator<GenomicRegion>());
 
       for (GenomicRegion cigarLocation : results) {
-        SearchResults<Gene> se = results.get(cigarLocation);
+        SearchResults<GenomicEntity> se = results.get(cigarLocation);
 
         for (GenomicRegion re : se) {
-          for (Gene gene : se.getValues(re)) {
+          for (GenomicEntity gene : se.getValues(re)) {
             String symbol = gene.getSymbol();
 
             geneMap.get(symbol).add(cigarLocation);
@@ -546,11 +548,11 @@ public class MainFeatureCount {
     }
   }
 
-  private static final IterMap<GenomicRegion, SearchResults<Gene>> processRegion(
+  private static final IterMap<GenomicRegion, SearchResults<GenomicEntity>> processRegion(
       SAMRecord record,
       GenomicRegion region,
       int minBp,
-      GapSearch<Gene> genes,
+      GapSearch<GenomicEntity> genes,
       Set<GenomicRegion> allCigarLocations) {
     // gapSearch.getOverlappingFeatures(region, minBp, results);
 
@@ -562,7 +564,7 @@ public class MainFeatureCount {
     Cigar cigar = record.getCigar();
     GenomicRegion r;
 
-    IterMap<GenomicRegion, SearchResults<Gene>> ret = new IterTreeMap<GenomicRegion, SearchResults<Gene>>();
+    IterMap<GenomicRegion, SearchResults<GenomicEntity>> ret = new IterTreeMap<GenomicRegion, SearchResults<GenomicEntity>>();
 
     for (CigarElement ce : cigar.getCigarElements()) {
       int l = ce.getLength();
@@ -575,7 +577,8 @@ public class MainFeatureCount {
 
         // System.err.println("CIGAR " + l + ce.getOperator() + " " + r);
 
-        SearchResults<Gene> features = genes.getOverlappingFeatures(r, minBp);
+        SearchResults<GenomicEntity> features = genes.getOverlappingFeatures(r,
+            minBp);
 
         // Only populate with interesting results
         if (features.size() > 0) {
@@ -819,7 +822,7 @@ public class MainFeatureCount {
 
         allCigarLocations.clear();
 
-        IterMap<GenomicRegion, SearchResults<Gene>> results = processRegion(
+        IterMap<GenomicRegion, SearchResults<GenomicEntity>> results = processRegion(
             record,
             region,
             minBp,
