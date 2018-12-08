@@ -20,15 +20,15 @@ import org.jebtk.bioinformatics.genomic.GTB1Parser;
 import org.jebtk.bioinformatics.genomic.GTB2Parser;
 import org.jebtk.bioinformatics.genomic.GTBZParser;
 import org.jebtk.bioinformatics.genomic.GeneParser;
-import org.jebtk.bioinformatics.genomic.Genes;
+import org.jebtk.bioinformatics.genomic.GenesDB;
 import org.jebtk.bioinformatics.genomic.Genome;
 import org.jebtk.bioinformatics.genomic.GenomicEntity;
 import org.jebtk.bioinformatics.genomic.GenomicRegion;
 import org.jebtk.bioinformatics.genomic.GenomicType;
 import org.jebtk.bioinformatics.genomic.Strand;
-import org.jebtk.core.cli.CommandLineArg;
-import org.jebtk.core.cli.CommandLineArgs;
-import org.jebtk.core.cli.Options;
+import org.jebtk.core.cli.Dsdsd;
+import org.jebtk.core.cli.ArgParser;
+import org.jebtk.core.cli.Args;
 import org.jebtk.core.collections.CountMap;
 import org.jebtk.core.collections.DefaultHashMap;
 import org.jebtk.core.collections.DefaultTreeMap;
@@ -67,7 +67,7 @@ public class MainFeatureCount {
 
   public static void main(String[] args) throws SAXException, IOException,
   ParserConfigurationException, ParseException {
-    Options options = new Options();
+    Args options = new Args();
 
     options.add('g', "gff", true);
     options.add('t', "gtb", true);
@@ -104,11 +104,11 @@ public class MainFeatureCount {
     Set<String> excludeTags = new HashSet<String>();
     Set<GenomicType> levels = new HashSet<GenomicType>();
 
-    CommandLineArgs cmdArgs = CommandLineArgs.parse(options, args);
+    ArgParser cmdArgs = ArgParser.parse(options, args);
 
     GenomicType level;
 
-    for (CommandLineArg cmdArg : cmdArgs) {
+    for (Dsdsd cmdArg : cmdArgs) {
       switch (cmdArg.getShortName()) {
       case 'g':
         gffFile = PathUtils.getPath(cmdArg.getValue());
@@ -153,7 +153,7 @@ public class MainFeatureCount {
         break;
       case 'h':
       default:
-        Options.printHelp(options);
+        Args.printHelp(options);
         System.exit(0);
         break;
       }
@@ -168,7 +168,7 @@ public class MainFeatureCount {
     // Map<String, Set<String>> transcriptSymbolMap = null;
     Map<String, Set<String>> symbolTranscriptMap = null;
 
-    Genes genes = null;
+    GenesDB genes = null;
 
     if (gffFile != null) {
       LOG.info("Loading gff from {}...", gffFile);
@@ -442,7 +442,7 @@ public class MainFeatureCount {
   }
 
   private static void output(String genome,
-      Genes genes,
+      GenesDB genes,
       Map<String, Set<String>> symbolTranscriptMap,
       DoubleCountMap<String> gCountMap) throws IOException {
     LOG.info("Writing...");
@@ -570,7 +570,7 @@ public class MainFeatureCount {
       SAMRecord record,
       GenomicRegion region,
       int minBp,
-      Genes genes,
+      GenesDB genes,
       Set<GenomicRegion> allCigarLocations) throws IOException {
     // gapSearch.getOverlappingFeatures(region, minBp, results);
 
@@ -595,7 +595,7 @@ public class MainFeatureCount {
 
         // System.err.println("CIGAR " + l + ce.getOperator() + " " + r);
 
-        List<GenomicEntity> features = genes.getOverlappingGenes("gencode", region, minBp); //.getOverlappingFeatures(r,
+        List<GenomicEntity> features = genes.overlapping("gencode", region, minBp); //.getOverlappingFeatures(r,
         // minBp);
 
         // Only populate with interesting results
@@ -792,7 +792,7 @@ public class MainFeatureCount {
   private static void outputMapped(String genome,
       String bam,
       Path bamFile,
-      Genes genes,
+      GenesDB genes,
       int minBp) throws IOException {
 
     String name = PathUtils.getName(PathUtils.getPwd());
