@@ -104,7 +104,7 @@ public class MainFeatureCount {
     Set<String> excludeTags = new HashSet<String>();
     Set<GenomicType> levels = new HashSet<GenomicType>();
 
-    ArgParser cmdArgs = ArgParser.parse(options, args);
+    ArgParser cmdArgs = ArgParser.parseGMT(options, args);
 
     GenomicType level;
 
