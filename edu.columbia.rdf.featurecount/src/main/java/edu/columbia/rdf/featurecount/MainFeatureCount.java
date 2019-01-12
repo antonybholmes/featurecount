@@ -56,7 +56,7 @@ import htsjdk.samtools.SamReader;
 /**
  * Convert a sam file into a gene summary similar to htseq-count.
  * 
- * @author Antony Holmes Holmes
+ * @author Antony Holmes
  *
  */
 public class MainFeatureCount {
