@@ -26,7 +26,6 @@ import org.jebtk.bioinformatics.genomic.GenomicEntity;
 import org.jebtk.bioinformatics.genomic.GenomicRegion;
 import org.jebtk.bioinformatics.genomic.GenomicType;
 import org.jebtk.bioinformatics.genomic.Strand;
-import org.jebtk.core.cli.Dsdsd;
 import org.jebtk.core.cli.ArgParser;
 import org.jebtk.core.cli.Args;
 import org.jebtk.core.collections.CountMap;
@@ -89,7 +88,7 @@ public class MainFeatureCount {
     boolean transFracMode = false;
     boolean mapped = false;
     boolean quiet = false;
-    String genome = Genome.HG19;
+    Genome genome = Genome.HG19;
 
     // The fraction of cigar mappings that must contain the same gene for
     // a read to be kept
@@ -108,7 +107,7 @@ public class MainFeatureCount {
 
     GenomicType level;
 
-    for (Dsdsd cmdArg : cmdArgs) {
+    for (Entry<String, List<String>> cmdArg : cmdArgs) {
       switch (cmdArg.getShortName()) {
       case 'g':
         gffFile = PathUtils.getPath(cmdArg.getValue());
@@ -117,7 +116,7 @@ public class MainFeatureCount {
         gtbFile = PathUtils.getPath(cmdArg.getValue());
         break;
       case 'e':
-        excludeTags.add(cmdArg.getValue());
+        excludeTags.update(cmdArg.getValue());
         break;
       case 'l':
         level = GenomicType.parse(cmdArg.getValue());
@@ -364,7 +363,7 @@ public class MainFeatureCount {
           }
 
           // For each different location a read maps
-          for (GenomicRegion location : locations) {
+          for (Entry<GenomicRegion, IterMap<GenomicRegion, IterMap<String, Set<String>>>> location : locations) {
 
             // All the transcript ids of the elements it
             // overlaps
@@ -653,7 +652,7 @@ public class MainFeatureCount {
           .toString());
       writer.newLine();
 
-      for (String rid : readTransMap) {
+      for (Entry<String, IterMap<GenomicRegion, IterMap<GenomicRegion, IterMap<String, Set<String>>>>> rid : readTransMap) {
         // How many genes this read is shared by
 
         IterMap<GenomicRegion, IterMap<GenomicRegion, IterMap<String, Set<String>>>> locations = readTransMap
